@@ -4,8 +4,31 @@ import { useState, useRef, useEffect, KeyboardEvent } from 'react'
 import {
   Loader2, RefreshCw, X, Play, ChevronRight,
   Volume2, Hash, Sparkles, CheckCircle2, AlertCircle,
-  Download, FileVideo, RotateCcw,
+  Download, FileVideo, RotateCcw, Zap,
 } from 'lucide-react'
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const LOADING_MSGS = [
+  'Pensando en el ángulo correcto...',
+  'Revisando qué le duele al cliente...',
+  'Armando las escenas...',
+  'Eligiendo las palabras exactas...',
+]
+
+const PLACEHOLDERS = [
+  'Ej: video para AgroShield mostrando cómo detecta un robo de noche en el pivote',
+  'Ej: reel de MachineInsight para dueños de flotas que no saben cuánto trabaja su tractor',
+  'Ej: spot de ProcessLink en industria de carwash automatizado, sin datos en tiempo real',
+  'Ej: video de AssetGuard para empresa con generadores que desaparecen en faena',
+]
+
+const QUICK_CHIPS: { label: string; instruction: string }[] = [
+  { label: 'Hazlo más corto',     instruction: 'hazlo más corto, máximo 3 escenas, al grano' },
+  { label: 'Más urgente',         instruction: 'hazlo más urgente, con más FOMO y sentido de riesgo' },
+  { label: 'Cambia el gancho',    instruction: 'cambia completamente el gancho de apertura, que sea disruptivo' },
+  { label: 'Prueba otro ángulo',  instruction: 'prueba un ángulo totalmente diferente para el mismo producto' },
+]
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -57,26 +80,41 @@ const STYLE_META: Record<VideoScene['style'], { label: string; bg: string; text:
   cta:      { label: 'CTA',      bg: 'rgba(139,92,246,0.15)',  text: '#A78BFA' },
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+// Block reveal animation: each section fades + slides in based on its index
+function B(idx: number, visible: number): React.CSSProperties {
+  const shown = visible > idx
+  return {
+    opacity: shown ? 1 : 0,
+    transform: shown ? 'translateY(0)' : 'translateY(7px)',
+    transition: 'opacity 0.32s ease, transform 0.32s ease',
+  }
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function VideoAgentChat() {
-  const [topic, setTopic]       = useState('')
-  const [product, setProduct]   = useState<string | null>(null)
-  const [status, setStatus]     = useState<Status>('idle')
-  const [props, setProps]       = useState<VideoProps | null>(null)
-  const [error, setError]       = useState<string | null>(null)
-  const [lastTopic, setLastTopic] = useState('')
-  const [runId, setRunId]       = useState<string | null>(null)
-  const [artifact, setArtifact] = useState<ArtifactInfo | null>(null)
+  const [topic, setTopic]           = useState('')
+  const [product, setProduct]       = useState<string | null>(null)
+  const [status, setStatus]         = useState<Status>('idle')
+  const [props, setProps]           = useState<VideoProps | null>(null)
+  const [error, setError]           = useState<string | null>(null)
+  const [lastTopic, setLastTopic]   = useState('')
+  const [runId, setRunId]           = useState<string | null>(null)
+  const [artifact, setArtifact]     = useState<ArtifactInfo | null>(null)
+  // UX state
+  const [visibleBlocks, setVisibleBlocks] = useState(0)
+  const [loadingMsgIdx, setLoadingMsgIdx] = useState(0)
+  const [placeholderIdx, setPlaceholderIdx] = useState(0)
+  const [btnPressing, setBtnPressing] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // ── Polling for render status ──────────────────────────────────────────
 
   useEffect(() => {
     if (status !== 'dispatched' || !runId) return
-
     let cancelled = false
-
     async function checkStatus() {
       if (cancelled) return
       try {
@@ -85,10 +123,8 @@ export function VideoAgentChat() {
         const data = await res.json() as {
           status: 'in_progress' | 'completed' | 'failed'
           artifact?: ArtifactInfo | null
-          conclusion?: string
         }
         if (cancelled) return
-
         if (data.status === 'completed') {
           setArtifact(data.artifact ?? null)
           setStatus('render_complete')
@@ -96,49 +132,104 @@ export function VideoAgentChat() {
           setError('El render falló en GitHub Actions')
           setStatus('render_failed')
         }
-        // else: still in_progress → keep polling
-      } catch {
-        // Network error: keep polling
-      }
+      } catch { /* keep polling */ }
     }
-
     checkStatus()
     const timer = setInterval(checkStatus, 15_000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
+    return () => { cancelled = true; clearInterval(timer) }
   }, [status, runId])
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // ── Stagger reveal when props arrive ──────────────────────────────────
 
-  async function callApi(dispatchRender: boolean) {
+  useEffect(() => {
+    if (!props) return
+    const total = props.scenes.length + 5  // headline + scenes + voiceover + caption + chips + actions
+    const timers = Array.from({ length: total }, (_, i) =>
+      setTimeout(() => setVisibleBlocks(i + 1), i * 80)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [props])
+
+  // ── Loading message rotation ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (status !== 'generating') { setLoadingMsgIdx(0); return }
+    const timer = setInterval(
+      () => setLoadingMsgIdx(i => (i + 1) % LOADING_MSGS.length),
+      2000
+    )
+    return () => clearInterval(timer)
+  }, [status])
+
+  // ── Placeholder rotation ──────────────────────────────────────────────
+
+  useEffect(() => {
+    const timer = setInterval(
+      () => setPlaceholderIdx(i => (i + 1) % PLACEHOLDERS.length),
+      4000
+    )
+    return () => clearInterval(timer)
+  }, [])
+
+  // ── Core API call ──────────────────────────────────────────────────────
+
+  async function callApi(topicStr: string, dispatchRender: boolean) {
     const res = await fetch('/api/generate-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: lastTopic || topic, product, dispatch: dispatchRender }),
+      body: JSON.stringify({ topic: topicStr, product, dispatch: dispatchRender }),
     })
     const data = await res.json() as { props: VideoProps; runId?: string | null; error?: string }
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
     return { videoProps: data.props, runId: data.runId ?? null }
   }
 
+  // ── Action handlers ────────────────────────────────────────────────────
+
   async function generate() {
-    const t = topic.trim()
-    if (!t || status === 'generating') return
-    setLastTopic(t)
+    const newTopic = topic.trim()
+    if (!newTopic || status === 'generating') return
+
+    // Conversational context: if there's a previous result, weave it in
+    const effectiveTopic = props
+      ? `Producto: ${props.product}. Video previo: "${props.headline}". Nueva instrucción: ${newTopic}`
+      : newTopic
+
+    setLastTopic(newTopic)
     setStatus('generating')
     setError(null)
     setProps(null)
     setRunId(null)
     setArtifact(null)
+    setVisibleBlocks(0)
 
     try {
-      const { videoProps } = await callApi(false)
+      const { videoProps } = await callApi(effectiveTopic, false)
       setProps(videoProps)
       setStatus('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
+      setStatus('error')
+    }
+  }
+
+  async function handleChip(instruction: string) {
+    const contextTopic = props
+      ? `Producto: ${props.product}. Video previo: "${props.headline}". Ahora: ${instruction}`
+      : instruction
+    setLastTopic(instruction)
+    setStatus('generating')
+    setError(null)
+    setProps(null)
+    setRunId(null)
+    setArtifact(null)
+    setVisibleBlocks(0)
+    try {
+      const { videoProps } = await callApi(contextTopic, false)
+      setProps(videoProps)
+      setStatus('ready')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error')
       setStatus('error')
     }
   }
@@ -149,9 +240,8 @@ export function VideoAgentChat() {
     setError(null)
     setRunId(null)
     setArtifact(null)
-
     try {
-      const { runId: id } = await callApi(true)
+      const { runId: id } = await callApi(lastTopic, true)
       setRunId(id)
       setStatus('dispatched')
     } catch (err) {
@@ -165,8 +255,9 @@ export function VideoAgentChat() {
     setError(null)
     setRunId(null)
     setArtifact(null)
+    setVisibleBlocks(0)
     try {
-      const { videoProps } = await callApi(false)
+      const { videoProps } = await callApi(lastTopic, false)
       setProps(videoProps)
       setStatus('ready')
     } catch (err) {
@@ -181,6 +272,7 @@ export function VideoAgentChat() {
     setError(null)
     setRunId(null)
     setArtifact(null)
+    setVisibleBlocks(0)
     setTimeout(() => textareaRef.current?.focus(), 50)
   }
 
@@ -201,6 +293,7 @@ export function VideoAgentChat() {
   const isLoading = status === 'generating' || status === 'rendering'
   const totalSec  = props?.scenes.reduce((a, s) => a + s.durationSec, 0) ?? 0
   const showProps = props && ['ready', 'dispatched', 'render_complete', 'render_failed'].includes(status)
+  const sceneCount = props?.scenes.length ?? 0
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -256,7 +349,11 @@ export function VideoAgentChat() {
 
       {/* Textarea */}
       <div
-        style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.08)' }}
+        style={{
+          background: '#131d35',
+          border: `1px solid ${status === 'generating' ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.08)'}`,
+          transition: 'border-color 0.3s ease',
+        }}
         className="rounded-xl overflow-hidden"
       >
         <textarea
@@ -266,7 +363,7 @@ export function VideoAgentChat() {
           onKeyDown={handleKeyDown}
           disabled={isLoading}
           rows={3}
-          placeholder="Describe el video que quieres generar... (Enter para enviar, Shift+Enter para nueva línea)"
+          placeholder={PLACEHOLDERS[placeholderIdx]}
           style={{ color: '#F1F5F9', caretColor: '#10B981' }}
           className="w-full bg-transparent p-4 text-sm resize-none outline-none placeholder:text-slate-600 disabled:opacity-50"
         />
@@ -275,16 +372,21 @@ export function VideoAgentChat() {
           className="flex items-center justify-between px-4 py-2"
         >
           <span style={{ color: '#475569' }} className="text-xs">
-            {topic.length} caracteres
+            {topic.length > 0 ? `${topic.length} caracteres` : (props ? '↑ itera sobre el video anterior' : 'Enter para enviar')}
           </span>
           <button
             onClick={generate}
             disabled={!topic.trim() || isLoading}
+            onMouseDown={() => setBtnPressing(true)}
+            onMouseUp={() => setBtnPressing(false)}
+            onMouseLeave={() => setBtnPressing(false)}
             style={{
               background: topic.trim() && !isLoading ? '#10B981' : 'rgba(255,255,255,0.08)',
               color: topic.trim() && !isLoading ? '#fff' : '#475569',
+              transform: btnPressing && !isLoading ? 'scale(0.94)' : 'scale(1)',
+              transition: 'transform 0.1s ease, background 0.2s ease',
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:cursor-not-allowed"
           >
             {status === 'generating' ? (
               <><Loader2 size={12} className="animate-spin" /> Generando…</>
@@ -297,82 +399,104 @@ export function VideoAgentChat() {
 
       {/* Status bar */}
       {status !== 'idle' && (
-        <StatusBar status={status} error={error} product={props?.product} />
+        <StatusBar
+          status={status}
+          error={error}
+          product={props?.product}
+          loadingMsg={LOADING_MSGS[loadingMsgIdx]}
+        />
       )}
 
       {/* Results */}
       {showProps && (
         <div className="space-y-4">
           {/* Headline + meta */}
-          <div
-            style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
-            className="rounded-xl p-4"
-          >
-            <p style={{ color: '#64748B' }} className="text-xs mb-1">TITULAR</p>
-            <p className="text-white font-semibold text-lg leading-snug">{props!.headline}</p>
-            <div className="flex gap-4 mt-2">
-              <span style={{ color: '#475569' }} className="text-xs">{props!.scenes.length} escenas</span>
-              <span style={{ color: '#475569' }} className="text-xs">{totalSec}s de video</span>
-              <span style={{ color: props!.productColor ?? '#10B981' }} className="text-xs font-medium">
-                {props!.product}
-              </span>
+          <div style={B(0, visibleBlocks)}>
+            <div
+              style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
+              className="rounded-xl p-4"
+            >
+              <p style={{ color: '#64748B' }} className="text-xs mb-1">TITULAR</p>
+              <p className="text-white font-semibold text-lg leading-snug">{props!.headline}</p>
+              <div className="flex gap-4 mt-2">
+                <span style={{ color: '#475569' }} className="text-xs">{sceneCount} escenas</span>
+                <span style={{ color: '#475569' }} className="text-xs">{totalSec}s de video</span>
+                <span style={{ color: props!.productColor ?? '#10B981' }} className="text-xs font-medium">
+                  {props!.product}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Scene cards */}
+          {/* Scene cards — each staggers individually */}
           <div className="space-y-2">
             <p style={{ color: '#475569' }} className="text-xs font-medium uppercase tracking-wider">Escenas</p>
             {props!.scenes.map((scene, i) => (
-              <SceneCard key={i} scene={scene} index={i} />
+              <div key={i} style={B(i + 1, visibleBlocks)}>
+                <SceneCard scene={scene} index={i} />
+              </div>
             ))}
           </div>
 
           {/* Voiceover */}
-          <div
-            style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
-            className="rounded-xl p-4"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <Volume2 size={13} style={{ color: '#64748B' }} />
-              <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider">Voz en off</p>
+          <div style={B(sceneCount + 1, visibleBlocks)}>
+            <div
+              style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
+              className="rounded-xl p-4"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Volume2 size={13} style={{ color: '#64748B' }} />
+                <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider">Voz en off</p>
+              </div>
+              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
+                {props!.voiceover}
+              </p>
             </div>
-            <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
-              {props!.voiceover}
-            </p>
           </div>
 
           {/* Caption */}
-          <div
-            style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
-            className="rounded-xl p-4"
-          >
-            <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider mb-2">Caption redes</p>
-            <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
-              {props!.caption}
-            </p>
-            <div className="flex flex-wrap gap-1 mt-3">
-              {props!.hashtags.map(tag => (
-                <span
-                  key={tag}
-                  style={{ background: 'rgba(16,185,129,0.1)', color: '#34D399' }}
-                  className="flex items-center gap-0.5 px-2 py-0.5 rounded text-xs"
-                >
-                  <Hash size={10} />
-                  {tag}
-                </span>
-              ))}
+          <div style={B(sceneCount + 2, visibleBlocks)}>
+            <div
+              style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
+              className="rounded-xl p-4"
+            >
+              <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider mb-2">Caption redes</p>
+              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
+                {props!.caption}
+              </p>
+              <div className="flex flex-wrap gap-1 mt-3">
+                {props!.hashtags.map(tag => (
+                  <span
+                    key={tag}
+                    style={{ background: 'rgba(16,185,129,0.1)', color: '#34D399' }}
+                    className="flex items-center gap-0.5 px-2 py-0.5 rounded text-xs"
+                  >
+                    <Hash size={10} />
+                    {tag}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Action buttons (only when ready to render) */}
+          {/* Quick chips — only when ready */}
           {status === 'ready' && (
-            <ActionButtons
-              onRender={handleRender}
-              onRegenerate={handleRegenerate}
-              onReject={handleReject}
-              isLoading={isLoading}
-              renderingStatus={status}
-            />
+            <div style={B(sceneCount + 3, visibleBlocks)}>
+              <QuickChips onChip={handleChip} />
+            </div>
+          )}
+
+          {/* Action buttons */}
+          {status === 'ready' && (
+            <div style={B(sceneCount + 4, visibleBlocks)}>
+              <ActionButtons
+                onRender={handleRender}
+                onRegenerate={handleRegenerate}
+                onReject={handleReject}
+                isLoading={isLoading}
+                renderingStatus={status}
+              />
+            </div>
           )}
 
           {/* Rendering progress */}
@@ -380,7 +504,7 @@ export function VideoAgentChat() {
             <RenderProgress runId={runId} />
           )}
 
-          {/* Render complete: download card */}
+          {/* Render complete */}
           {status === 'render_complete' && (
             <DownloadCard runId={runId!} artifact={artifact} onReset={handleReject} />
           )}
@@ -429,25 +553,63 @@ function SceneCard({ scene, index }: { scene: VideoScene; index: number }) {
   )
 }
 
-function StatusBar({ status, error, product }: { status: Status; error: string | null; product?: string }) {
+function QuickChips({ onChip }: { onChip: (instruction: string) => void }) {
+  const [activeChip, setActiveChip] = useState<string | null>(null)
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Zap size={11} style={{ color: '#64748B' }} />
+        <p style={{ color: '#64748B' }} className="text-[11px] font-medium uppercase tracking-wider">Refinar rápido</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {QUICK_CHIPS.map(chip => (
+          <button
+            key={chip.label}
+            onClick={() => { setActiveChip(chip.label); onChip(chip.instruction) }}
+            disabled={activeChip !== null}
+            style={{
+              background: activeChip === chip.label ? 'rgba(139,92,246,0.15)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${activeChip === chip.label ? 'rgba(139,92,246,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              color: activeChip === chip.label ? '#A78BFA' : '#94A3B8',
+              transition: 'all 0.2s ease',
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium hover:opacity-90 disabled:cursor-not-allowed"
+          >
+            {activeChip === chip.label && <Loader2 size={10} className="animate-spin" />}
+            {chip.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function StatusBar({
+  status, error, product, loadingMsg,
+}: {
+  status: Status
+  error: string | null
+  product?: string
+  loadingMsg: string
+}) {
   const config: Partial<Record<Status, { icon: React.ReactNode; text: string; color: string; bg: string }>> = {
-    generating:    { icon: <Loader2 size={13} className="animate-spin" />, text: 'Claude está generando las escenas…',   color: '#60A5FA', bg: 'rgba(59,130,246,0.1)' },
-    ready:         { icon: <CheckCircle2 size={13} />,                     text: `Props listas para ${product ?? 'el producto'}`, color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
-    rendering:     { icon: <Loader2 size={13} className="animate-spin" />, text: 'Disparando render en GitHub Actions…', color: '#A78BFA', bg: 'rgba(139,92,246,0.1)' },
-    dispatched:    { icon: <Loader2 size={13} className="animate-spin" />, text: 'Renderizando en GitHub Actions…',       color: '#60A5FA', bg: 'rgba(59,130,246,0.1)' },
-    render_complete: { icon: <CheckCircle2 size={13} />,                   text: 'Video listo para descargar',            color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
-    render_failed: { icon: <AlertCircle size={13} />,                      text: error ?? 'El render falló',              color: '#F87171', bg: 'rgba(239,68,68,0.1)' },
-    error:         { icon: <AlertCircle size={13} />,                      text: error ?? 'Error desconocido',            color: '#F87171', bg: 'rgba(239,68,68,0.1)' },
+    generating:      { icon: <Loader2 size={13} className="animate-spin" />, text: loadingMsg,                                color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
+    ready:           { icon: <CheckCircle2 size={13} />,                     text: `Props listas para ${product ?? 'el producto'}`, color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
+    rendering:       { icon: <Loader2 size={13} className="animate-spin" />, text: 'Disparando render en GitHub Actions…',    color: '#A78BFA', bg: 'rgba(139,92,246,0.1)' },
+    dispatched:      { icon: <Loader2 size={13} className="animate-spin" />, text: 'Renderizando en GitHub Actions…',         color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
+    render_complete: { icon: <CheckCircle2 size={13} />,                     text: 'Video listo para descargar',               color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
+    render_failed:   { icon: <AlertCircle size={13} />,                      text: error ?? 'El render falló',                 color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
+    error:           { icon: <AlertCircle size={13} />,                      text: error ?? 'Error desconocido',               color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
   }
   const c = config[status]
   if (!c) return null
   return (
     <div
-      style={{ background: c.bg, border: `1px solid ${c.color}30`, color: c.color }}
+      style={{ background: c.bg, border: `1px solid ${c.color}30`, color: c.color, transition: 'all 0.3s ease' }}
       className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs"
     >
       {c.icon}
-      <span>{c.text}</span>
+      <span style={{ transition: 'opacity 0.2s ease' }}>{c.text}</span>
     </div>
   )
 }
@@ -467,8 +629,6 @@ function RenderProgress({ runId }: { runId: string | null }) {
           <span style={{ color: '#475569' }} className="text-xs font-mono">run #{runId}</span>
         )}
       </div>
-
-      {/* Animated progress bar */}
       <div
         style={{ background: 'rgba(59,130,246,0.15)', height: '4px' }}
         className="rounded-full overflow-hidden"
@@ -482,15 +642,13 @@ function RenderProgress({ runId }: { runId: string | null }) {
           }}
         />
       </div>
-
       <p style={{ color: '#475569' }} className="text-xs">
         Chequeando cada 15 segundos · Edge-TTS → Remotion → GitHub Artifact
       </p>
-
       <style>{`
         @keyframes shimmer {
           0%   { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
+          100% { background-position:  200% 0; }
         }
       `}</style>
     </div>
@@ -498,9 +656,7 @@ function RenderProgress({ runId }: { runId: string | null }) {
 }
 
 function DownloadCard({
-  runId,
-  artifact,
-  onReset,
+  runId, artifact, onReset,
 }: {
   runId: string
   artifact: ArtifactInfo | null
@@ -523,8 +679,6 @@ function DownloadCard({
           <p style={{ color: '#64748B' }} className="text-xs mt-0.5">Listo para descargar</p>
         </div>
       </div>
-
-      {/* File info */}
       {artifact && (
         <div
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
@@ -537,7 +691,6 @@ function DownloadCard({
           </div>
         </div>
       )}
-
       <div className="flex gap-2">
         <a
           href={`/api/download-artifact/${runId}`}
@@ -562,9 +715,7 @@ function DownloadCard({
 }
 
 function RenderFailedCard({
-  error,
-  onRetry,
-  onReset,
+  error, onRetry, onReset,
 }: {
   error: string | null
   onRetry: () => void
@@ -584,7 +735,6 @@ function RenderFailedCard({
           </p>
         </div>
       </div>
-
       <div className="flex gap-2">
         <button
           onClick={onRetry}
