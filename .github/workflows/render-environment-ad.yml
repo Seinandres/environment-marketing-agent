@@ -54,6 +54,14 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: node scripts/render-environment-ad.mjs
 
+      - name: Upload MP4 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-ad-${{ github.run_id }}
+          path: remotion/out/*.mp4
+          retention-days: 7
+
       - name: Notify failure
         if: failure()
         env:
