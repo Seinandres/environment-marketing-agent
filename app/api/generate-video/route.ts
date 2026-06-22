@@ -11,11 +11,12 @@ export async function POST(req: NextRequest) {
 
     const props = await generateVideoProps(topic.trim(), product ?? undefined)
 
+    let runId: string | null = null
     if (dispatch) {
-      await triggerGitHubRender(props)
+      runId = await triggerGitHubRender(props)
     }
 
-    return NextResponse.json({ props })
+    return NextResponse.json({ props, runId })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error interno'
     console.error('[generate-video]', err)
@@ -23,23 +24,25 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function triggerGitHubRender(props: object) {
+async function triggerGitHubRender(props: object): Promise<string | null> {
   const token = process.env.GITHUB_TOKEN
   const repo = process.env.GITHUB_REPO
 
   if (!token || !repo) {
     console.warn('[generate-video] GITHUB_TOKEN o GITHUB_REPO no configurados — render omitido')
-    return
+    return null
+  }
+
+  const ghHeaders = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github.v3+json',
+    'Content-Type': 'application/json',
+    'X-GitHub-Api-Version': '2022-11-28',
   }
 
   const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
+    headers: ghHeaders,
     body: JSON.stringify({
       event_type: 'render-environment-ad',
       client_payload: {
@@ -53,4 +56,16 @@ async function triggerGitHubRender(props: object) {
     const body = await res.text()
     throw new Error(`GitHub dispatch falló: ${res.status} ${body}`)
   }
+
+  // Wait for GitHub to register the run (usually 2-3s)
+  await new Promise(r => setTimeout(r, 4000))
+
+  const runsRes = await fetch(
+    `https://api.github.com/repos/${repo}/actions/workflows/render-environment-ad.yml/runs?event=repository_dispatch&per_page=1`,
+    { headers: ghHeaders }
+  )
+
+  if (!runsRes.ok) return null
+  const { workflow_runs } = await runsRes.json() as { workflow_runs: Array<{ id: number }> }
+  return workflow_runs?.[0]?.id?.toString() ?? null
 }
