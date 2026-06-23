@@ -13,22 +13,30 @@ const LOADING_MSGS = [
   'Pensando en el ángulo correcto...',
   'Revisando qué le duele al cliente...',
   'Armando las escenas...',
-  'Eligiendo las palabras exactas...',
+  'Eligiendo las palabras justas...',
 ]
 
 const PLACEHOLDERS = [
-  'Ej: video para AgroShield mostrando cómo detecta un robo de noche en el pivote',
-  'Ej: reel de MachineInsight para dueños de flotas que no saben cuánto trabaja su tractor',
-  'Ej: spot de ProcessLink en industria de carwash automatizado, sin datos en tiempo real',
-  'Ej: video de AssetGuard para empresa con generadores que desaparecen en faena',
+  'video sobre robo de cables en pivotes durante la cosecha',
+  'post para LinkedIn sobre control de horas en maquinaria',
+  'campaña de AssetGuard para constructoras',
+  'muestra cómo ProcessLink digitaliza un car wash',
 ]
 
-const QUICK_CHIPS: { label: string; instruction: string }[] = [
-  { label: 'Hazlo más corto',     instruction: 'hazlo más corto, máximo 3 escenas, al grano' },
-  { label: 'Más urgente',         instruction: 'hazlo más urgente, con más FOMO y sentido de riesgo' },
-  { label: 'Cambia el gancho',    instruction: 'cambia completamente el gancho de apertura, que sea disruptivo' },
-  { label: 'Prueba otro ángulo',  instruction: 'prueba un ángulo totalmente diferente para el mismo producto' },
+const QUICK_CHIPS: { label: string; refinement: string }[] = [
+  { label: 'Hazlo más corto',    refinement: 'hazlo más corto, máximo 3 escenas, al grano' },
+  { label: 'Más urgente',        refinement: 'hazlo más urgente, con más FOMO y sentido de riesgo' },
+  { label: 'Cambia el gancho',   refinement: 'cambia completamente el gancho de apertura, que sea disruptivo' },
+  { label: 'Otro ángulo',        refinement: 'prueba un ángulo totalmente diferente para el mismo producto' },
 ]
+
+// CSS keyframe — defined once, used by all animated blocks via animation-delay
+const FADEIN_STYLE = `
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(7px); }
+    to   { opacity: 1; transform: translateY(0);   }
+  }
+`
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,10 +74,10 @@ type Status =
   | 'error'
 
 const PRODUCTS = [
-  { id: 'AGROSHIELD',     label: 'AgroShield',     color: '#10B981' },
-  { id: 'MACHINEINSIGHT', label: 'MachineInsight',  color: '#3B82F6' },
-  { id: 'PROCESSLINK',    label: 'ProcessLink',     color: '#8B5CF6' },
-  { id: 'ASSETGUARD',     label: 'AssetGuard',      color: '#F59E0B' },
+  { id: 'AGROSHIELD',     label: 'AgroShield',    color: '#10B981' },
+  { id: 'MACHINEINSIGHT', label: 'MachineInsight', color: '#3B82F6' },
+  { id: 'PROCESSLINK',    label: 'ProcessLink',    color: '#8B5CF6' },
+  { id: 'ASSETGUARD',     label: 'AssetGuard',     color: '#F59E0B' },
 ]
 
 const STYLE_META: Record<VideoScene['style'], { label: string; bg: string; text: string }> = {
@@ -82,32 +90,28 @@ const STYLE_META: Record<VideoScene['style'], { label: string; bg: string; text:
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// Block reveal animation: each section fades + slides in based on its index
-function B(idx: number, visible: number): React.CSSProperties {
-  const shown = visible > idx
-  return {
-    opacity: shown ? 1 : 0,
-    transform: shown ? 'translateY(0)' : 'translateY(7px)',
-    transition: 'opacity 0.32s ease, transform 0.32s ease',
-  }
+// Returns inline style for staggered CSS animation (no JS timers needed)
+function stagger(idx: number): React.CSSProperties {
+  return { animation: `fadein 0.35s ease both`, animationDelay: `${idx * 60}ms` }
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function VideoAgentChat() {
-  const [topic, setTopic]           = useState('')
-  const [product, setProduct]       = useState<string | null>(null)
-  const [status, setStatus]         = useState<Status>('idle')
-  const [props, setProps]           = useState<VideoProps | null>(null)
-  const [error, setError]           = useState<string | null>(null)
-  const [lastTopic, setLastTopic]   = useState('')
-  const [runId, setRunId]           = useState<string | null>(null)
-  const [artifact, setArtifact]     = useState<ArtifactInfo | null>(null)
+  const [topic, setTopic]         = useState('')
+  const [product, setProduct]     = useState<string | null>(null)
+  const [status, setStatus]       = useState<Status>('idle')
+  const [videoProps, setVideoProps] = useState<VideoProps | null>(null)
+  const [error, setError]         = useState<string | null>(null)
+  const [lastTopic, setLastTopic] = useState('')
+  const [runId, setRunId]         = useState<string | null>(null)
+  const [artifact, setArtifact]   = useState<ArtifactInfo | null>(null)
   // UX state
-  const [visibleBlocks, setVisibleBlocks] = useState(0)
-  const [loadingMsgIdx, setLoadingMsgIdx] = useState(0)
+  const [loadingMsgIdx, setLoadingMsgIdx]   = useState(0)
   const [placeholderIdx, setPlaceholderIdx] = useState(0)
-  const [btnPressing, setBtnPressing] = useState(false)
+  const [inputFocused, setInputFocused]     = useState(false)
+  const [btnPressing, setBtnPressing]       = useState(false)
+  const [isRefining, setIsRefining]         = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // ── Polling for render status ──────────────────────────────────────────
@@ -139,18 +143,7 @@ export function VideoAgentChat() {
     return () => { cancelled = true; clearInterval(timer) }
   }, [status, runId])
 
-  // ── Stagger reveal when props arrive ──────────────────────────────────
-
-  useEffect(() => {
-    if (!props) return
-    const total = props.scenes.length + 5  // headline + scenes + voiceover + caption + chips + actions
-    const timers = Array.from({ length: total }, (_, i) =>
-      setTimeout(() => setVisibleBlocks(i + 1), i * 80)
-    )
-    return () => timers.forEach(clearTimeout)
-  }, [props])
-
-  // ── Loading message rotation ───────────────────────────────────────────
+  // ── Loading message rotation (pauses when not generating) ─────────────
 
   useEffect(() => {
     if (status !== 'generating') { setLoadingMsgIdx(0); return }
@@ -161,51 +154,49 @@ export function VideoAgentChat() {
     return () => clearInterval(timer)
   }, [status])
 
-  // ── Placeholder rotation ──────────────────────────────────────────────
+  // ── Placeholder rotation (pauses when input has focus) ────────────────
 
   useEffect(() => {
+    if (inputFocused) return
     const timer = setInterval(
       () => setPlaceholderIdx(i => (i + 1) % PLACEHOLDERS.length),
       4000
     )
     return () => clearInterval(timer)
-  }, [])
+  }, [inputFocused])
 
   // ── Core API call ──────────────────────────────────────────────────────
 
-  async function callApi(topicStr: string, dispatchRender: boolean) {
+  async function callApi(topicStr: string, dispatchRender: boolean, refinement?: string) {
     const res = await fetch('/api/generate-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: topicStr, product, dispatch: dispatchRender }),
+      body: JSON.stringify({ topic: topicStr, product, dispatch: dispatchRender, refinement }),
     })
     const data = await res.json() as { props: VideoProps; runId?: string | null; error?: string }
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-    return { videoProps: data.props, runId: data.runId ?? null }
+    return { props: data.props, runId: data.runId ?? null }
   }
 
   // ── Action handlers ────────────────────────────────────────────────────
 
+  function resetGenState() {
+    setError(null)
+    setVideoProps(null)
+    setRunId(null)
+    setArtifact(null)
+    setIsRefining(false)
+  }
+
   async function generate() {
     const newTopic = topic.trim()
     if (!newTopic || status === 'generating') return
-
-    // Conversational context: if there's a previous result, weave it in
-    const effectiveTopic = props
-      ? `Producto: ${props.product}. Video previo: "${props.headline}". Nueva instrucción: ${newTopic}`
-      : newTopic
-
     setLastTopic(newTopic)
     setStatus('generating')
-    setError(null)
-    setProps(null)
-    setRunId(null)
-    setArtifact(null)
-    setVisibleBlocks(0)
-
+    resetGenState()
     try {
-      const { videoProps } = await callApi(effectiveTopic, false)
-      setProps(videoProps)
+      const { props } = await callApi(newTopic, false)
+      setVideoProps(props)
       setStatus('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
@@ -213,29 +204,30 @@ export function VideoAgentChat() {
     }
   }
 
-  async function handleChip(instruction: string) {
-    const contextTopic = props
-      ? `Producto: ${props.product}. Video previo: "${props.headline}". Ahora: ${instruction}`
-      : instruction
-    setLastTopic(instruction)
+  async function handleChip(refinement: string) {
+    if (!lastTopic) return
     setStatus('generating')
+    setIsRefining(true)
     setError(null)
-    setProps(null)
+    setVideoProps(null)
     setRunId(null)
     setArtifact(null)
-    setVisibleBlocks(0)
     try {
-      const { videoProps } = await callApi(contextTopic, false)
-      setProps(videoProps)
+      // Send the original topic + refinement as a separate field so the
+      // backend can inject it into the Claude prompt cleanly
+      const { props } = await callApi(lastTopic, false, refinement)
+      setVideoProps(props)
       setStatus('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error')
       setStatus('error')
+    } finally {
+      setIsRefining(false)
     }
   }
 
   async function handleRender() {
-    if (!props) return
+    if (!videoProps) return
     setStatus('rendering')
     setError(null)
     setRunId(null)
@@ -252,13 +244,10 @@ export function VideoAgentChat() {
 
   async function handleRegenerate() {
     setStatus('generating')
-    setError(null)
-    setRunId(null)
-    setArtifact(null)
-    setVisibleBlocks(0)
+    resetGenState()
     try {
-      const { videoProps } = await callApi(lastTopic, false)
-      setProps(videoProps)
+      const { props } = await callApi(lastTopic, false)
+      setVideoProps(props)
       setStatus('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al regenerar')
@@ -267,12 +256,12 @@ export function VideoAgentChat() {
   }
 
   function handleReject() {
-    setProps(null)
+    setVideoProps(null)
     setStatus('idle')
     setError(null)
     setRunId(null)
     setArtifact(null)
-    setVisibleBlocks(0)
+    setIsRefining(false)
     setTimeout(() => textareaRef.current?.focus(), 50)
   }
 
@@ -290,10 +279,11 @@ export function VideoAgentChat() {
     }
   }
 
-  const isLoading = status === 'generating' || status === 'rendering'
-  const totalSec  = props?.scenes.reduce((a, s) => a + s.durationSec, 0) ?? 0
-  const showProps = props && ['ready', 'dispatched', 'render_complete', 'render_failed'].includes(status)
-  const sceneCount = props?.scenes.length ?? 0
+  const isLoading  = status === 'generating' || status === 'rendering'
+  const totalSec   = videoProps?.scenes.reduce((a, s) => a + s.durationSec, 0) ?? 0
+  const showProps  = videoProps && ['ready', 'dispatched', 'render_complete', 'render_failed'].includes(status)
+  const sceneCount = videoProps?.scenes.length ?? 0
+  const loadingMsg = isRefining ? 'Ajustando el guion...' : LOADING_MSGS[loadingMsgIdx]
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -302,6 +292,8 @@ export function VideoAgentChat() {
       style={{ background: '#0E1628', border: '1px solid rgba(255,255,255,0.08)' }}
       className="rounded-2xl p-6 space-y-5"
     >
+      <style>{FADEIN_STYLE}</style>
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <div
@@ -361,6 +353,8 @@ export function VideoAgentChat() {
           value={topic}
           onChange={e => setTopic(e.target.value)}
           onKeyDown={handleKeyDown}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
           disabled={isLoading}
           rows={3}
           placeholder={PLACEHOLDERS[placeholderIdx]}
@@ -372,7 +366,9 @@ export function VideoAgentChat() {
           className="flex items-center justify-between px-4 py-2"
         >
           <span style={{ color: '#475569' }} className="text-xs">
-            {topic.length > 0 ? `${topic.length} caracteres` : (props ? '↑ itera sobre el video anterior' : 'Enter para enviar')}
+            {topic.length > 0
+              ? `${topic.length} caracteres`
+              : videoProps ? '↑ itera sobre el video anterior' : 'Enter para enviar'}
           </span>
           <button
             onClick={generate}
@@ -383,7 +379,7 @@ export function VideoAgentChat() {
             style={{
               background: topic.trim() && !isLoading ? '#10B981' : 'rgba(255,255,255,0.08)',
               color: topic.trim() && !isLoading ? '#fff' : '#475569',
-              transform: btnPressing && !isLoading ? 'scale(0.94)' : 'scale(1)',
+              transform: btnPressing && !isLoading ? 'scale(0.97)' : 'scale(1)',
               transition: 'transform 0.1s ease, background 0.2s ease',
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:cursor-not-allowed"
@@ -399,47 +395,42 @@ export function VideoAgentChat() {
 
       {/* Status bar */}
       {status !== 'idle' && (
-        <StatusBar
-          status={status}
-          error={error}
-          product={props?.product}
-          loadingMsg={LOADING_MSGS[loadingMsgIdx]}
-        />
+        <StatusBar status={status} error={error} product={videoProps?.product} loadingMsg={loadingMsg} />
       )}
 
       {/* Results */}
       {showProps && (
         <div className="space-y-4">
           {/* Headline + meta */}
-          <div style={B(0, visibleBlocks)}>
+          <div style={stagger(0)}>
             <div
               style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
               className="rounded-xl p-4"
             >
               <p style={{ color: '#64748B' }} className="text-xs mb-1">TITULAR</p>
-              <p className="text-white font-semibold text-lg leading-snug">{props!.headline}</p>
+              <p className="text-white font-semibold text-lg leading-snug">{videoProps!.headline}</p>
               <div className="flex gap-4 mt-2">
                 <span style={{ color: '#475569' }} className="text-xs">{sceneCount} escenas</span>
                 <span style={{ color: '#475569' }} className="text-xs">{totalSec}s de video</span>
-                <span style={{ color: props!.productColor ?? '#10B981' }} className="text-xs font-medium">
-                  {props!.product}
+                <span style={{ color: videoProps!.productColor ?? '#10B981' }} className="text-xs font-medium">
+                  {videoProps!.product}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Scene cards — each staggers individually */}
+          {/* Scene cards — each gets its own CSS animation-delay */}
           <div className="space-y-2">
-            <p style={{ color: '#475569' }} className="text-xs font-medium uppercase tracking-wider">Escenas</p>
-            {props!.scenes.map((scene, i) => (
-              <div key={i} style={B(i + 1, visibleBlocks)}>
+            <p style={{ color: '#475569', ...stagger(1) }} className="text-xs font-medium uppercase tracking-wider">Escenas</p>
+            {videoProps!.scenes.map((scene, i) => (
+              <div key={i} style={stagger(i + 2)}>
                 <SceneCard scene={scene} index={i} />
               </div>
             ))}
           </div>
 
           {/* Voiceover */}
-          <div style={B(sceneCount + 1, visibleBlocks)}>
+          <div style={stagger(sceneCount + 2)}>
             <div
               style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
               className="rounded-xl p-4"
@@ -448,24 +439,20 @@ export function VideoAgentChat() {
                 <Volume2 size={13} style={{ color: '#64748B' }} />
                 <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider">Voz en off</p>
               </div>
-              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
-                {props!.voiceover}
-              </p>
+              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">{videoProps!.voiceover}</p>
             </div>
           </div>
 
           {/* Caption */}
-          <div style={B(sceneCount + 2, visibleBlocks)}>
+          <div style={stagger(sceneCount + 3)}>
             <div
               style={{ background: '#131d35', border: '1px solid rgba(255,255,255,0.06)' }}
               className="rounded-xl p-4"
             >
               <p style={{ color: '#64748B' }} className="text-xs font-medium uppercase tracking-wider mb-2">Caption redes</p>
-              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">
-                {props!.caption}
-              </p>
+              <p style={{ color: '#CBD5E1', lineHeight: '1.6' }} className="text-sm">{videoProps!.caption}</p>
               <div className="flex flex-wrap gap-1 mt-3">
-                {props!.hashtags.map(tag => (
+                {videoProps!.hashtags.map(tag => (
                   <span
                     key={tag}
                     style={{ background: 'rgba(16,185,129,0.1)', color: '#34D399' }}
@@ -479,16 +466,16 @@ export function VideoAgentChat() {
             </div>
           </div>
 
-          {/* Quick chips — only when ready */}
+          {/* Quick refinement chips */}
           {status === 'ready' && (
-            <div style={B(sceneCount + 3, visibleBlocks)}>
+            <div style={stagger(sceneCount + 4)}>
               <QuickChips onChip={handleChip} />
             </div>
           )}
 
           {/* Action buttons */}
           {status === 'ready' && (
-            <div style={B(sceneCount + 4, visibleBlocks)}>
+            <div style={stagger(sceneCount + 5)}>
               <ActionButtons
                 onRender={handleRender}
                 onRegenerate={handleRegenerate}
@@ -500,9 +487,7 @@ export function VideoAgentChat() {
           )}
 
           {/* Rendering progress */}
-          {status === 'dispatched' && (
-            <RenderProgress runId={runId} />
-          )}
+          {status === 'dispatched' && <RenderProgress runId={runId} />}
 
           {/* Render complete */}
           {status === 'render_complete' && (
@@ -553,8 +538,14 @@ function SceneCard({ scene, index }: { scene: VideoScene; index: number }) {
   )
 }
 
-function QuickChips({ onChip }: { onChip: (instruction: string) => void }) {
+function QuickChips({ onChip }: { onChip: (refinement: string) => void }) {
   const [activeChip, setActiveChip] = useState<string | null>(null)
+
+  function handleClick(chip: typeof QUICK_CHIPS[0]) {
+    setActiveChip(chip.label)
+    onChip(chip.refinement)
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
@@ -565,7 +556,7 @@ function QuickChips({ onChip }: { onChip: (instruction: string) => void }) {
         {QUICK_CHIPS.map(chip => (
           <button
             key={chip.label}
-            onClick={() => { setActiveChip(chip.label); onChip(chip.instruction) }}
+            onClick={() => handleClick(chip)}
             disabled={activeChip !== null}
             style={{
               background: activeChip === chip.label ? 'rgba(139,92,246,0.15)' : 'rgba(255,255,255,0.05)',
@@ -593,13 +584,13 @@ function StatusBar({
   loadingMsg: string
 }) {
   const config: Partial<Record<Status, { icon: React.ReactNode; text: string; color: string; bg: string }>> = {
-    generating:      { icon: <Loader2 size={13} className="animate-spin" />, text: loadingMsg,                                color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
+    generating:      { icon: <Loader2 size={13} className="animate-spin" />, text: loadingMsg,                                    color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
     ready:           { icon: <CheckCircle2 size={13} />,                     text: `Props listas para ${product ?? 'el producto'}`, color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
-    rendering:       { icon: <Loader2 size={13} className="animate-spin" />, text: 'Disparando render en GitHub Actions…',    color: '#A78BFA', bg: 'rgba(139,92,246,0.1)' },
-    dispatched:      { icon: <Loader2 size={13} className="animate-spin" />, text: 'Renderizando en GitHub Actions…',         color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
-    render_complete: { icon: <CheckCircle2 size={13} />,                     text: 'Video listo para descargar',               color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
-    render_failed:   { icon: <AlertCircle size={13} />,                      text: error ?? 'El render falló',                 color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
-    error:           { icon: <AlertCircle size={13} />,                      text: error ?? 'Error desconocido',               color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
+    rendering:       { icon: <Loader2 size={13} className="animate-spin" />, text: 'Disparando render en GitHub Actions…',          color: '#A78BFA', bg: 'rgba(139,92,246,0.1)' },
+    dispatched:      { icon: <Loader2 size={13} className="animate-spin" />, text: 'Renderizando en GitHub Actions…',               color: '#60A5FA', bg: 'rgba(59,130,246,0.1)'  },
+    render_complete: { icon: <CheckCircle2 size={13} />,                     text: 'Video listo para descargar',                    color: '#34D399', bg: 'rgba(16,185,129,0.1)' },
+    render_failed:   { icon: <AlertCircle size={13} />,                      text: error ?? 'El render falló',                      color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
+    error:           { icon: <AlertCircle size={13} />,                      text: error ?? 'Error desconocido',                    color: '#F87171', bg: 'rgba(239,68,68,0.1)'  },
   }
   const c = config[status]
   if (!c) return null
@@ -609,7 +600,7 @@ function StatusBar({
       className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs"
     >
       {c.icon}
-      <span style={{ transition: 'opacity 0.2s ease' }}>{c.text}</span>
+      <span>{c.text}</span>
     </div>
   )
 }
@@ -629,10 +620,7 @@ function RenderProgress({ runId }: { runId: string | null }) {
           <span style={{ color: '#475569' }} className="text-xs font-mono">run #{runId}</span>
         )}
       </div>
-      <div
-        style={{ background: 'rgba(59,130,246,0.15)', height: '4px' }}
-        className="rounded-full overflow-hidden"
-      >
+      <div style={{ background: 'rgba(59,130,246,0.15)', height: '4px' }} className="rounded-full overflow-hidden">
         <div
           style={{
             height: '100%',
@@ -655,12 +643,8 @@ function RenderProgress({ runId }: { runId: string | null }) {
   )
 }
 
-function DownloadCard({
-  runId, artifact, onReset,
-}: {
-  runId: string
-  artifact: ArtifactInfo | null
-  onReset: () => void
+function DownloadCard({ runId, artifact, onReset }: {
+  runId: string; artifact: ArtifactInfo | null; onReset: () => void
 }) {
   return (
     <div
@@ -714,12 +698,8 @@ function DownloadCard({
   )
 }
 
-function RenderFailedCard({
-  error, onRetry, onReset,
-}: {
-  error: string | null
-  onRetry: () => void
-  onReset: () => void
+function RenderFailedCard({ error, onRetry, onReset }: {
+  error: string | null; onRetry: () => void; onReset: () => void
 }) {
   return (
     <div
@@ -757,14 +737,9 @@ function RenderFailedCard({
   )
 }
 
-function ActionButtons({
-  onRender, onRegenerate, onReject, isLoading, renderingStatus,
-}: {
-  onRender: () => void
-  onRegenerate: () => void
-  onReject: () => void
-  isLoading: boolean
-  renderingStatus: Status
+function ActionButtons({ onRender, onRegenerate, onReject, isLoading, renderingStatus }: {
+  onRender: () => void; onRegenerate: () => void; onReject: () => void
+  isLoading: boolean; renderingStatus: Status
 }) {
   return (
     <div className="flex gap-2 pt-1">

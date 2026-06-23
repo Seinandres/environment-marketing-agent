@@ -39,7 +39,8 @@ const PRODUCT_COLORS: Record<string, string> = {
 
 export async function generateVideoProps(
   userPrompt: string,
-  forceProduct?: string
+  forceProduct?: string,
+  refinement?: string
 ): Promise<RemotionVideoProps> {
   const product = forceProduct ?? detectProduct(userPrompt)
   const productCtx = PRODUCT_CONTEXT[product] ?? PRODUCT_CONTEXT.OPERATIONS_CLOUD
@@ -64,9 +65,10 @@ REGLAS:
     system: systemPrompt,
     messages: [{
       role: 'user',
-      content: `Crea un video para: "${userPrompt}"
-
-Responde SOLO con este JSON, sin markdown:
+      content: [
+        `Crea un video para: "${userPrompt}"`,
+        refinement ? `\nAjusta el guion con esta indicación: ${refinement}` : '',
+        `\nResponde SOLO con este JSON, sin markdown:
 {
   "headline": "titular (máx 6 palabras)",
   "scenes": [{"text": "...", "subtext": "...", "durationSec": 6, "style": "hook"}],
@@ -74,6 +76,7 @@ Responde SOLO con este JSON, sin markdown:
   "caption": "texto para redes...",
   "hashtags": ["Environment", "IoT"]
 }`,
+      ].join(''),
     }],
   })
 

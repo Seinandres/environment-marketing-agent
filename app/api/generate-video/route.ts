@@ -3,13 +3,13 @@ import { generateVideoProps } from '@/lib/generateVideoProps'
 
 export async function POST(req: NextRequest) {
   try {
-    const { topic, product, dispatch } = await req.json()
+    const { topic, product, dispatch, refinement } = await req.json()
 
     if (!topic || typeof topic !== 'string' || topic.trim().length < 5) {
       return NextResponse.json({ error: 'topic es requerido (mínimo 5 caracteres)' }, { status: 400 })
     }
 
-    const props = await generateVideoProps(topic.trim(), product ?? undefined)
+    const props = await generateVideoProps(topic.trim(), product ?? undefined, refinement ?? undefined)
 
     let runId: string | null = null
     if (dispatch) {
