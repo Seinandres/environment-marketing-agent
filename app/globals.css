@@ -12,24 +12,52 @@
   100% { background-position:  200% 0; }
 }
 
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.4; transform: scale(0.8);  }
+}
+
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 
 :root {
-  --bg-base:    #0A0F1E;
-  --bg-card:    #0E1628;
-  --bg-elevated:#131d35;
-  --border:     rgba(255,255,255,0.08);
-  --primary:    #10B981;
-  --text:       #F1F5F9;
-  --muted:      #64748B;
+  --bg-app:            #EFF3F1;
+  --bg-card:           #FFFFFF;
+  --bg-card-soft:      #F9FAFB;
+  --bg-sidebar-active: #D1FAE5;
+
+  --text-primary:   #1F2937;
+  --text-secondary: #6B7280;
+  --text-tertiary:  #9CA3AF;
+
+  --accent:          #10B981;
+  --accent-dark:     #0F6E56;
+  --accent-light:    #D1FAE5;
+  --accent-gradient: linear-gradient(135deg, #10B981, #0F6E56);
+
+  --radius-card: 18px;
+  --radius-pill: 12px;
+  --radius-icon: 11px;
+
+  --product-agroshield-bg:     #D1FAE5;
+  --product-agroshield-fg:     #0F6E56;
+  --product-machineinsight-bg: #DBEAFE;
+  --product-machineinsight-fg: #1D4ED8;
+  --product-processlink-bg:    #EDE9FE;
+  --product-processlink-fg:    #6D28D9;
+  --product-assetguard-bg:     #FEF3C7;
+  --product-assetguard-fg:     #B45309;
+  --product-energylink-bg:     #CFFAFE;
+  --product-energylink-fg:     #0E7490;
 }
 
+/* ── Base ────────────────────────────────────────────────────────────────── */
+
 body {
-  background: var(--bg-base);
-  color: var(--text);
+  background: var(--bg-app);
+  color: var(--text-primary);
   font-family: system-ui, -apple-system, sans-serif;
 }
 
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-base); }
-::-webkit-scrollbar-thumb { background: #1e2d4a; border-radius: 3px; }
+::-webkit-scrollbar-track { background: var(--bg-app); }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
