@@ -30,14 +30,6 @@ const QUICK_CHIPS: { label: string; refinement: string }[] = [
   { label: 'Otro ángulo',        refinement: 'prueba un ángulo totalmente diferente para el mismo producto' },
 ]
 
-// CSS keyframe — defined once, used by all animated blocks via animation-delay
-const FADEIN_STYLE = `
-  @keyframes fadein {
-    from { opacity: 0; transform: translateY(7px); }
-    to   { opacity: 1; transform: translateY(0);   }
-  }
-`
-
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface VideoScene {
@@ -292,8 +284,6 @@ export function VideoAgentChat() {
       style={{ background: '#0E1628', border: '1px solid rgba(255,255,255,0.08)' }}
       className="rounded-2xl p-6 space-y-5"
     >
-      <style>{FADEIN_STYLE}</style>
-
       {/* Header */}
       <div className="flex items-center gap-3">
         <div
@@ -633,12 +623,6 @@ function RenderProgress({ runId }: { runId: string | null }) {
       <p style={{ color: '#475569' }} className="text-xs">
         Chequeando cada 15 segundos · Edge-TTS → Remotion → GitHub Artifact
       </p>
-      <style>{`
-        @keyframes shimmer {
-          0%   { background-position: -200% 0; }
-          100% { background-position:  200% 0; }
-        }
-      `}</style>
     </div>
   )
 }
